@@ -1,0 +1,330 @@
+datasource db {
+  provider = "postgresql"
+  url      = env("DATABASE_URL")
+}
+
+generator client {
+  provider = "prisma-client-js"
+}
+
+enum Role {
+  ADMIN
+  OPERATOR
+}
+
+enum LeadStatus {
+  NEW
+  CONTACTED
+  QUALIFIED
+  UNQUALIFIED
+  LOST
+}
+
+enum TransactionType {
+  BUY
+  RENT
+  BOTH
+}
+
+enum ConversationChannel {
+  BROWSER_VOICE
+  BROWSER_TEXT
+  TELEPHONY
+}
+
+enum ConversationStatus {
+  ACTIVE
+  COMPLETED
+  ESCAlATED
+  FAILED
+}
+
+enum ConversationOutcome {
+  QUALIFIED_CALLBACK
+  QUALIFIED_COMPLETED
+  ESCALATED_OPERATOR
+  INFORMATION_ONLY
+  NOT_INTERESTED
+  DO_NOT_CALL
+  INCOMPLETE
+}
+
+enum MessageRole {
+  SYSTEM
+  USER
+  ASSISTANT
+  TOOL
+}
+
+enum ToolExecutionStatus {
+  SUCCESS
+  FAILED
+}
+
+enum CallbackStatus {
+  PENDING
+  COMPLETED
+  CANCELLED
+}
+
+enum EscalationPriority {
+  LOW
+  MEDIUM
+  HIGH
+  URGENT
+}
+
+enum EscalationStatus {
+  OPEN
+  RESOLVED
+}
+
+model User {
+  id           String      @id @default(uuid())
+  email        String      @unique
+  passwordHash String
+  name         String
+  role         Role        @default(OPERATOR)
+  businessId   String?
+  business     BusinessConfig? @relation(fields: [businessId], references: [id])
+  callbacks    Callback[]  @relation("AssignedCallbacks")
+  auditEvents  AuditEvent[]
+  createdAt    DateTime    @default(now())
+  updatedAt    DateTime    @updatedAt
+
+  @@index([email])
+}
+
+model BusinessConfig {
+  id             String           @id @default(uuid())
+  name           String
+  legalName      String?
+  industry       String           @default("Real Estate")
+  timezone       String           @default("Asia/Kolkata")
+  phone          String?
+  email          String?
+  address        String?
+  users          User[]
+  agentConfig    AgentConfig?
+  leads          Lead[]
+  properties     Property[]
+  knowledgeBase  KnowledgeEntry[]
+  conversations  Conversation[]
+  callbacks      Callback[]
+  escalations    Escalation[]
+  auditEvents    AuditEvent[]
+  createdAt      DateTime         @default(now())
+  updatedAt      DateTime         @updatedAt
+}
+
+model AgentConfig {
+  id                  String         @id @default(uuid())
+  businessId          String         @unique
+  business            BusinessConfig @relation(fields: [businessId], references: [id], onDelete: Cascade)
+  name                String         @default("Aura")
+  introduction        String         @default("Namaste! I am Aura, an AI assistant for Vaani Realty. Are you looking to buy or rent a property today?")
+  fallbackMessage     String         @default("I apologize, but I am unable to answer that directly. Let me arrange for a human property specialist to call you.")
+  supportedLanguages  String[]       @default(["en", "hi"]) // ISO codes: en, hi, bn ready
+  voiceGender         String         @default("female")
+  activeProvider      String         @default("mock") // "mock" or "real"
+  asrModel            String         @default("ai4bharat/indic-conformer-600m-multilingual")
+  llmModel            String         @default("Qwen/Qwen3-8B")
+  ttsModel            String         @default("ai4bharat/indic-parler-tts")
+  qualificationPrompt String         @db.Text
+  escalationRules     String         @db.Text
+  isRecordingEnabled  Boolean        @default(false)
+  retentionDays       Int            @default(30)
+  createdAt           DateTime       @default(now())
+  updatedAt           DateTime       @updatedAt
+}
+
+model Lead {
+  id                String             @id @default(uuid())
+  businessId        String
+  business          BusinessConfig     @relation(fields: [businessId], references: [id], onDelete: Cascade)
+  name              String
+  phone             String
+  email             String?
+  source            String             @default("Voice Inbound")
+  preferredLanguage String             @default("en")
+  status            LeadStatus         @default(NEW)
+  notes             String?            @db.Text
+  contactConsent    Boolean            @default(true)
+  doNotCall         Boolean            @default(false)
+  requirements      LeadRequirements?
+  conversations     Conversation[]
+  callbacks         Callback[]
+  escalations       Escalation[]
+  createdAt         DateTime           @default(now())
+  updatedAt         DateTime           @updatedAt
+
+  @@index([businessId, phone])
+  @@index([businessId, status])
+}
+
+model LeadRequirements {
+  id              String          @id @default(uuid())
+  leadId          String          @unique
+  lead            Lead            @relation(fields: [leadId], references: [id], onDelete: Cascade)
+  propertyType    String?         // Apartment, Villa, Plot, Commercial
+  transactionType TransactionType @default(BUY)
+  location        String?
+  budgetMin       Decimal?        @db.Decimal(12, 2)
+  budgetMax       Decimal?        @db.Decimal(12, 2)
+  currency        String          @default("INR")
+  timeline        String?         // Immediate, 1-3 months, 6+ months
+  bedrooms        Int?
+  isQualified     Boolean         @default(false)
+  missingFields   String[]        @default([])
+  rawNotes        String?         @db.Text
+  updatedAt       DateTime        @updatedAt
+}
+
+model Property {
+  id                  String          @id @default(uuid())
+  businessId          String
+  business            BusinessConfig  @relation(fields: [businessId], references: [id], onDelete: Cascade)
+  title               String
+  propertyType        String          // Apartment, Villa, Penthouse, Plot
+  transactionType     TransactionType @default(BUY)
+  location            String          // e.g. Whitefield, Indiranagar
+  address             String
+  price               Decimal         @db.Decimal(12, 2)
+  bedrooms            Int?
+  bathrooms           Int?
+  areaSqFt            Int
+  status              String          @default("AVAILABLE") // AVAILABLE, RESERVED, SOLD
+  features            String[]        @default([])
+  approvedDescription String          @db.Text
+  createdAt           DateTime        @default(now())
+  updatedAt           DateTime        @updatedAt
+
+  @@index([businessId, location])
+  @@index([businessId, transactionType])
+}
+
+model KnowledgeEntry {
+  id         String         @id @default(uuid())
+  businessId String
+  business   BusinessConfig @relation(fields: [businessId], references: [id], onDelete: Cascade)
+  category   String         @default("General") // Pricing, Amenities, RERA, Site Visit, Process
+  question   String         @db.Text
+  answer     String         @db.Text
+  keywords   String[]       @default([])
+  isActive   Boolean        @default(true)
+  createdAt  DateTime       @default(now())
+  updatedAt  DateTime       @updatedAt
+
+  @@index([businessId, category])
+}
+
+model Conversation {
+  id             String               @id @default(uuid())
+  businessId     String
+  business       BusinessConfig       @relation(fields: [businessId], references: [id], onDelete: Cascade)
+  leadId         String?
+  lead           Lead?                @relation(fields: [leadId], references: [id], onDelete: SetNull)
+  channel        ConversationChannel  @default(BROWSER_VOICE)
+  status         ConversationStatus   @default(ACTIVE)
+  language       String               @default("en")
+  providerId     String               @default("mock")
+  summary        String?              @db.Text
+  outcome        ConversationOutcome?
+  structuredData Json?
+  latencyMetrics Json?                // ASR, LLM, TTS, E2E breakdown
+  startedAt      DateTime             @default(now())
+  endedAt        DateTime?
+  durationSec    Int?
+  messages       ConversationMessage[]
+  toolExecutions ToolExecution[]
+  callbacks      Callback[]
+  escalations    Escalation[]
+  createdAt      DateTime             @default(now())
+
+  @@index([businessId, status])
+  @@index([businessId, createdAt])
+}
+
+model ConversationMessage {
+  id             String       @id @default(uuid())
+  conversationId String
+  conversation   Conversation @relation(fields: [conversationId], references: [id], onDelete: Cascade)
+  role           MessageRole
+  content        String       @db.Text
+  latencyMs      Int?
+  toolCallId     String?
+  createdAt      DateTime     @default(now())
+
+  @@index([conversationId])
+}
+
+model ToolExecution {
+  id              String              @id @default(uuid())
+  conversationId  String
+  conversation    Conversation        @relation(fields: [conversationId], references: [id], onDelete: Cascade)
+  toolName        String
+  inputParams     Json
+  outputResult    Json
+  status          ToolExecutionStatus @default(SUCCESS)
+  executionTimeMs Int
+  createdAt       DateTime            @default(now())
+
+  @@index([conversationId])
+}
+
+model Callback {
+  id             String         @id @default(uuid())
+  businessId     String
+  business       BusinessConfig @relation(fields: [businessId], references: [id], onDelete: Cascade)
+  leadId         String
+  lead           Lead           @relation(fields: [leadId], references: [id], onDelete: Cascade)
+  conversationId String?
+  conversation   Conversation?  @relation(fields: [conversationId], references: [id], onDelete: SetNull)
+  assignedUserId String?
+  assignedUser   User?          @relation("AssignedCallbacks", fields: [assignedUserId], references: [id], onDelete: SetNull)
+  requestedTime  DateTime
+  timezone       String         @default("Asia/Kolkata")
+  status         CallbackStatus @default(PENDING)
+  reason         String?
+  notes          String?        @db.Text
+  idempotencyKey String?        @unique
+  createdAt      DateTime       @default(now())
+  updatedAt      DateTime       @updatedAt
+
+  @@index([businessId, status])
+  @@index([leadId])
+}
+
+model Escalation {
+  id             String             @id @default(uuid())
+  businessId     String
+  business       BusinessConfig     @relation(fields: [businessId], references: [id], onDelete: Cascade)
+  leadId         String
+  lead           Lead               @relation(fields: [leadId], references: [id], onDelete: Cascade)
+  conversationId String?
+  conversation   Conversation?      @relation(fields: [conversationId], references: [id], onDelete: SetNull)
+  reason         String             @db.Text
+  priority       EscalationPriority @default(MEDIUM)
+  status         EscalationStatus   @default(OPEN)
+  notes          String?            @db.Text
+  createdAt      DateTime           @default(now())
+  updatedAt      DateTime           @updatedAt
+
+  @@index([businessId, status])
+}
+
+model AuditEvent {
+  id           String         @id @default(uuid())
+  businessId   String
+  business     BusinessConfig @relation(fields: [businessId], references: [id], onDelete: Cascade)
+  userId       String?
+  user         User?          @relation(fields: [userId], references: [id], onDelete: SetNull)
+  action       String
+  resourceType String
+  resourceId   String?
+  details      Json?
+  ipAddress    String?
+  createdAt    DateTime       @default(now())
+
+  @@index([businessId, createdAt])
+}

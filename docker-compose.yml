@@ -1,0 +1,67 @@
+version: '3.8'
+
+services:
+  postgres:
+    image: postgres:16-alpine
+    container_name: vaani-postgres
+    restart: unless-stopped
+    environment:
+      POSTGRES_USER: postgres
+      POSTGRES_PASSWORD: postgrespassword
+      POSTGRES_DB: vaanidb
+    ports:
+      - "5432:5432"
+    volumes:
+      - pgdata:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U postgres -d vaanidb"]
+      interval: 5s
+      timeout: 5s
+      retries: 5
+
+  backend:
+    build:
+      context: .
+      dockerfile: packages/backend/Dockerfile
+    container_name: vaani-backend
+    restart: unless-stopped
+    depends_on:
+      postgres:
+        condition: service_healthy
+    environment:
+      DATABASE_URL: postgresql://postgres:postgrespassword@postgres:5432/vaanidb
+      PORT: 5001
+      NODE_ENV: development
+      JWT_SECRET: vaani_super_secret_jwt_key_32chars_minimum!
+      CORS_ORIGIN: http://localhost:3000
+      AI_SERVICE_URL: http://ai-service:8000
+      AI_MODE: mock
+      DEFAULT_TIMEZONE: Asia/Kolkata
+    ports:
+      - "5001:5001"
+
+  frontend:
+    build:
+      context: .
+      dockerfile: packages/frontend/Dockerfile
+    container_name: vaani-frontend
+    restart: unless-stopped
+    depends_on:
+      - backend
+    ports:
+      - "3000:3000"
+
+  ai-service:
+    build:
+      context: ./packages/ai-service
+      dockerfile: Dockerfile
+    container_name: vaani-ai-service
+    restart: unless-stopped
+    environment:
+      AI_MODE: mock
+      PORT: 8000
+    ports:
+      - "8000:8000"
+
+volumes:
+  pgdata:
