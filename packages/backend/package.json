@@ -11,6 +11,7 @@
     "prisma:migrate": "prisma migrate dev",
     "prisma:push": "prisma db push",
     "prisma:seed": "tsx prisma/seed.ts",
+    "studio": "prisma studio",
     "test": "vitest run",
     "lint": "tsc --noEmit"
   },
